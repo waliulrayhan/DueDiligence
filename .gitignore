@@ -1,0 +1,114 @@
+# =============================================================================
+# SECRETS & ENVIRONMENT
+# =============================================================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# =============================================================================
+# PYTHON / BACKEND
+# =============================================================================
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+MANIFEST
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# mypy / type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ruff / linters
+.ruff_cache/
+
+# Alembic – keep migrations, ignore auto-generated env artefacts
+# (do NOT ignore backend/alembic/ itself)
+
+# Uploads & local data
+backend/uploads/
+data/uploads/
+*.pdf
+*.docx
+
+# Sentence-transformers model cache
+.cache/
+backend/.cache/
+
+# SQLite dev databases
+*.db
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# =============================================================================
+# NODE / FRONTEND
+# =============================================================================
+
+node_modules/
+frontend/node_modules/
+
+# Vite build output
+frontend/dist/
+frontend/.vite/
+
+# TypeScript build info
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+
+# Local Vite/ESBuild cache
+frontend/.cache/
+
+# =============================================================================
+# EDITORS & OS
+# =============================================================================
+
+# VS Code (keep workspace settings, ignore personal/machine-specific)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# JetBrains
+.idea/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# =============================================================================
+# MISC
+# =============================================================================
+
+# Vercel local dev
+.vercel/

@@ -1,2 +1,35 @@
+# Web framework & server
 fastapi
-uvicorn
+uvicorn[standard]
+
+# Database – ORM, migrations & drivers
+sqlalchemy          # ORM for relational databases (Postgres, SQLite, etc.)
+alembic             # Schema migration tool for SQLAlchemy
+asyncpg             # Async Postgres driver used by SQLAlchemy's async engine
+psycopg2-binary     # Sync Postgres driver (used by Alembic and scripts)
+
+# Validation & settings
+pydantic            # Runtime data validation; FastAPI request/response models are built on it
+pydantic-settings   # BaseSettings class for loading config from env vars / .env files
+python-dotenv       # Loads a .env file into os.environ (used alongside pydantic-settings)
+
+# File handling
+python-multipart    # Parses multipart/form-data for file upload endpoints in FastAPI
+aiofiles            # Async file I/O so upload/read operations don't block the event loop
+
+# Vector store & embeddings
+pinecone            # Pinecone managed vector database client for storing/querying embeddings
+sentence-transformers  # Generates dense text embeddings from pre-trained transformer models
+
+# Document parsing
+PyPDF2              # Extracts text and metadata from PDF files
+python-docx         # Reads and writes .docx Word documents
+
+# LLM client
+openai              # OpenAI-compatible client (GPT-4, embeddings, and any OpenAI-API-compatible endpoint)
+
+# HTTP
+httpx               # Async HTTP client for outbound API calls and FastAPI integration testing
+
+# Logging
+loguru              # Structured, coloured logger with minimal setup
