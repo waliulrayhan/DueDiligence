@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, field_serializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, field_serializer
+
+# ---------------------------------------------------------------------------
+# Annotated helper – coerces uuid.UUID (returned by SQLAlchemy) to plain str
+# without breaking callers that already pass a str.
+# ---------------------------------------------------------------------------
+UUIDStr = Annotated[str, BeforeValidator(str)]
 
 from src.models.enums import (
     AnswerStatus,
@@ -73,9 +79,9 @@ class EvaluateRequest(BaseModel):
 class CitationResponse(BaseModel):
     model_config = _orm_config
 
-    id: str
-    chunk_id: str | None
-    document_id: str | None
+    id: UUIDStr
+    chunk_id: str | None          # plain Text column, not a UUID
+    document_id: UUIDStr | None
     page_number: int | None
     excerpt_text: str | None
     relevance_score: float | None
@@ -84,8 +90,8 @@ class CitationResponse(BaseModel):
 class AnswerResponse(BaseModel):
     model_config = _orm_config
 
-    id: str
-    question_id: str
+    id: UUIDStr
+    question_id: UUIDStr
     ai_answer_text: str | None
     manual_answer_text: str | None
     answer_text: str | None
@@ -100,7 +106,7 @@ class AnswerResponse(BaseModel):
 class QuestionResponse(BaseModel):
     model_config = _orm_config
 
-    id: str
+    id: UUIDStr
     section_name: str | None
     question_text: str
     question_order: int | None
@@ -111,7 +117,7 @@ class QuestionResponse(BaseModel):
 class ProjectResponse(BaseModel):
     model_config = _orm_config
 
-    id: str
+    id: UUIDStr
     name: str
     description: str | None
     scope: DocumentScope
@@ -128,7 +134,7 @@ class ProjectResponse(BaseModel):
 class DocumentResponse(BaseModel):
     model_config = _orm_config
 
-    id: str
+    id: UUIDStr
     original_name: str
     file_type: str | None
     status: DocumentStatus
@@ -156,7 +162,7 @@ class AsyncRequestResponse(BaseModel):
 class EvaluationResultResponse(BaseModel):
     model_config = _orm_config
 
-    question_id: str
+    question_id: UUIDStr
     similarity_score: float
     keyword_overlap: float
     overall_score: float

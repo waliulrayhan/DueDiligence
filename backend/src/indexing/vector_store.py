@@ -13,6 +13,7 @@ from src.config import settings
 # ---------------------------------------------------------------------------
 # all-MiniLM-L6-v2 produces 384-dimensional vectors and is fast enough to run
 # on CPU.  The model is downloaded once on first use and cached locally.
+# Index name is configured via PINECONE_INDEX_NAME env var (default: 'duediligence-chunks').
 _EMBED_MODEL = "all-MiniLM-L6-v2"
 _DIMENSION = 384
 _METRIC = "cosine"
@@ -23,20 +24,20 @@ class VectorStore:
 
     def __init__(self) -> None:
         # ── Pinecone client ────────────────────────────────────────────────
-        self._pc = Pinecone(api_key=settings.pinecone_api_key)
-        self._index_name = settings.pinecone_index_name
+        self.pc = Pinecone(api_key=settings.pinecone_api_key)
+        self.index_name = settings.pinecone_index_name  # e.g. 'duediligence-chunks'
 
-        existing = [idx.name for idx in self._pc.list_indexes()]
-        if self._index_name not in existing:
+        existing = [idx.name for idx in self.pc.list_indexes()]
+        if self.index_name not in existing:
             logger.info(
                 "Pinecone index '{}' not found – creating it "
                 "(cloud={}, region={}).",
-                self._index_name,
+                self.index_name,
                 settings.pinecone_cloud,
                 settings.pinecone_region,
             )
-            self._pc.create_index(
-                name=self._index_name,
+            self.pc.create_index(
+                name=self.index_name,
                 dimension=_DIMENSION,
                 metric=_METRIC,
                 spec=ServerlessSpec(
@@ -44,25 +45,21 @@ class VectorStore:
                     region=settings.pinecone_region,
                 ),
             )
-            logger.info("Index '{}' created.", self._index_name)
+            logger.info("Index '{}' created.", self.index_name)
         else:
-            logger.debug("Using existing Pinecone index '{}'.", self._index_name)
+            logger.debug("Using existing Pinecone index '{}'.", self.index_name)
 
-        self._index = self._pc.Index(self._index_name)
+        self.index = self.pc.Index(self.index_name)
 
         # ── Embedding model ────────────────────────────────────────────────
         logger.debug("Loading sentence-transformer model '{}'.", _EMBED_MODEL)
-        self._embedder = SentenceTransformer(_EMBED_MODEL)
+        self.model = SentenceTransformer(_EMBED_MODEL)
 
     # ---------------------------------------------------------------------- #
     # Public API                                                               #
     # ---------------------------------------------------------------------- #
 
-    def add_chunks(
-        self,
-        document_id: str,
-        chunks: list[dict[str, Any]],
-    ) -> None:
+    def add_chunks(self, document_id: str, chunks: list[dict[str, Any]]) -> None:
         """Embed *chunks* and upsert them into Pinecone.
 
         Each item in *chunks* must have:
@@ -70,33 +67,43 @@ class VectorStore:
             - ``text``        (str)  raw text to embed
             - ``page_number`` (int)  origin page (1-based; 0 if unknown)
 
-        Additional keys are ignored.
+        Optional keys stored in metadata when present:
+            - ``word_start`` / ``word_end``  – word-offset bookmarks from the parser
         """
         if not chunks:
             return
 
         texts = [c["text"] for c in chunks]
-        embeddings = self._embedder.encode(texts, show_progress_bar=False).tolist()
+        embeddings = self.model.encode(
+            texts, batch_size=32, show_progress_bar=False
+        ).tolist()
 
-        vectors = [
-            {
-                "id": chunk["chunk_id"],
-                "values": embedding,
-                "metadata": {
-                    "document_id": document_id,
-                    "chunk_id": chunk["chunk_id"],
-                    "page_number": chunk.get("page_number", 0),
-                    "text": chunk["text"],
-                },
+        vectors: list[dict[str, Any]] = []
+        for chunk, embedding in zip(chunks, embeddings):
+            metadata: dict[str, Any] = {
+                "document_id": document_id,
+                "chunk_id": chunk["chunk_id"],
+                "page_number": chunk.get("page_number", 0),
+                # Truncate to stay within Pinecone's metadata size limit
+                "text": chunk["text"][:1000],
             }
-            for chunk, embedding in zip(chunks, embeddings)
-        ]
+            # Persist word offsets produced by DocumentParser.chunk_pages
+            if "word_start" in chunk:
+                metadata["word_start"] = chunk["word_start"]
+            if "word_end" in chunk:
+                metadata["word_end"] = chunk["word_end"]
+
+            vectors.append(
+                {
+                    "id": chunk["chunk_id"],
+                    "values": embedding,
+                    "metadata": metadata,
+                }
+            )
 
         # Pinecone recommends batches of ≤100 vectors per upsert call.
-        batch_size = 100
-        for start in range(0, len(vectors), batch_size):
-            batch = vectors[start : start + batch_size]
-            self._index.upsert(vectors=batch)
+        for i in range(0, len(vectors), 100):
+            self.index.upsert(vectors=vectors[i : i + 100])
 
         logger.info(
             "Upserted {} chunks for document '{}'.", len(vectors), document_id
@@ -104,56 +111,52 @@ class VectorStore:
 
     def search(
         self,
-        query_text: str,
-        n_results: int = 5,
+        query: str,
+        n_results: int = 8,
         filter_document_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Embed *query_text* and return the top *n_results* matching chunks.
+        """Embed *query* and return the top *n_results* matching chunks.
 
         Returns a list of dicts with keys:
             ``chunk_id``, ``document_id``, ``text``, ``page_number``,
             ``relevance_score``
         """
-        query_vector = self._embedder.encode(
-            query_text, show_progress_bar=False
-        ).tolist()
+        query_embedding = self.model.encode(
+            [query], show_progress_bar=False
+        ).tolist()[0]
 
         pinecone_filter: dict[str, Any] | None = None
         if filter_document_ids:
             pinecone_filter = {"document_id": {"$in": filter_document_ids}}
 
-        response = self._index.query(
-            vector=query_vector,
+        response = self.index.query(
+            vector=query_embedding,
             top_k=n_results,
-            include_metadata=True,
             filter=pinecone_filter,
+            include_metadata=True,
         )
 
-        results: list[dict[str, Any]] = []
-        for match in response.matches:
-            meta = match.metadata or {}
-            results.append(
-                {
-                    "chunk_id": meta.get("chunk_id", match.id),
-                    "document_id": meta.get("document_id", ""),
-                    "text": meta.get("text", ""),
-                    "page_number": meta.get("page_number", 0),
-                    "relevance_score": match.score,
-                }
-            )
+        return [
+            {
+                "chunk_id": m.id,
+                "document_id": (m.metadata or {}).get("document_id", ""),
+                "text": (m.metadata or {}).get("text", ""),
+                "page_number": (m.metadata or {}).get("page_number", 0),
+                "relevance_score": float(m.score),
+            }
+            for m in response.matches
+        ]
 
-        return results
-
-    def delete_document_chunks(self, document_id: str) -> None:
-        """Delete all vectors whose metadata.document_id matches *document_id*.
-
-        Pinecone serverless supports metadata-filtered deletes via
-        ``delete(filter=...)``.
-        """
-        self._index.delete(filter={"document_id": {"$eq": document_id}})
+    def delete_document(self, document_id: str) -> None:
+        """Delete all vectors whose metadata.document_id matches *document_id*."""
+        self.index.delete(filter={"document_id": {"$eq": document_id}})
         logger.info(
             "Deleted all chunks for document '{}' from Pinecone.", document_id
         )
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return index statistics from Pinecone (vector count, dimension, etc.)."""
+        return self.index.describe_index_stats()
 
 
 # ---------------------------------------------------------------------------

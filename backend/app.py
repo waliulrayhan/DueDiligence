@@ -97,9 +97,7 @@ async def health_check() -> dict:
         try:
             # Pinecone SDK is synchronous – run in a thread to avoid blocking
             # the event loop while the HTTP round-trip completes.
-            stats = await asyncio.to_thread(
-                vector_store._index.describe_index_stats
-            )
+            stats = await asyncio.to_thread(vector_store.get_stats)
             return {"pinecone": "ok", "pinecone_vector_count": stats.total_vector_count}
         except Exception as exc:
             logger.error("Health check – Pinecone error: {}", exc)
