@@ -9,11 +9,11 @@ from openai import OpenAI
 from src.config import settings
 
 # ---------------------------------------------------------------------------
-# OpenAI-compatible client pointed at xAI Grok
+# OpenAI-compatible client pointed at Groq
 # ---------------------------------------------------------------------------
 client = OpenAI(
-    api_key=settings.xai_api_key,
-    base_url=settings.xai_base_url,
+    api_key=settings.groq_api_key,
+    base_url=settings.groq_base_url,
 )
 
 _SYSTEM_PROMPT = (

@@ -29,11 +29,11 @@ class Settings(BaseSettings):
     pinecone_region: str  # e.g. "us-east-1"
 
     # ------------------------------------------------------------------ #
-    # LLM (xAI / OpenAI-compatible)                                       #
+    # LLM (Groq / OpenAI-compatible)                                      #
     # ------------------------------------------------------------------ #
-    xai_api_key: str
-    xai_base_url: str     # e.g. "https://api.x.ai/v1"
-    llm_model: str        # e.g. "grok-2-latest"
+    groq_api_key: str
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "llama-3.3-70b-versatile"
 
     # ------------------------------------------------------------------ #
     # Application                                                          #
