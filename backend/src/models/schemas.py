@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, field_serializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, field_serializer, field_validator
 
 # ---------------------------------------------------------------------------
 # Annotated helper – coerces uuid.UUID (returned by SQLAlchemy) to plain str
@@ -101,6 +101,13 @@ class AnswerResponse(BaseModel):
     reviewer_note: str | None
     reviewed_at: datetime | None = None
     citations: list[CitationResponse] = []
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _coerce_citations(cls, v: object) -> object:
+        # SQLAlchemy returns None for an unloaded/empty list relationship when
+        # __allow_unmapped__ = True infers uselist=False. Normalise to [].
+        return v if v is not None else []
 
 
 class QuestionResponse(BaseModel):
