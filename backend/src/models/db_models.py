@@ -58,7 +58,7 @@ class Document(Base):
     )
 
     # Relationships
-    citations: list[Citation] = relationship("Citation", back_populates="document")
+    citations: list[Citation] = relationship("Citation", back_populates="document", uselist=True)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ class Answer(Base):
     question: Question = relationship("Question", back_populates="answers")
     project: Project = relationship("Project", back_populates="answers")
     citations: list[Citation] = relationship(
-        "Citation", back_populates="answer", cascade="all, delete-orphan"
+        "Citation", back_populates="answer", cascade="all, delete-orphan", uselist=True
     )
     audit_log: list[AnswerAuditLog] = relationship(
         "AnswerAuditLog", back_populates="answer", cascade="all, delete-orphan"

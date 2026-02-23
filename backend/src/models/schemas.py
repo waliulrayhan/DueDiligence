@@ -44,6 +44,7 @@ class GenerateSingleAnswerRequest(BaseModel):
 
 class GenerateAllAnswersRequest(BaseModel):
     project_id: str
+    max_questions: int = 0  # 0 = generate for all questions
 
 
 class UpdateProjectRequest(BaseModel):
@@ -105,9 +106,14 @@ class AnswerResponse(BaseModel):
     @field_validator("citations", mode="before")
     @classmethod
     def _coerce_citations(cls, v: object) -> object:
-        # SQLAlchemy returns None for an unloaded/empty list relationship when
-        # __allow_unmapped__ = True infers uselist=False. Normalise to [].
-        return v if v is not None else []
+        # SQLAlchemy with __allow_unmapped__=True can infer uselist=False and
+        # return None (no rows), a single ORM object (1 row), or a proper list.
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        # single ORM object — wrap it
+        return [v]
 
 
 class QuestionResponse(BaseModel):
