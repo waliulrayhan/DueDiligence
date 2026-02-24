@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { updateAnswer, generateSingle, extractErrorMessage } from '@/lib/api';
 
@@ -51,7 +51,7 @@ interface QuestionReviewDrawerProps {
   answer: AnswerResponse | null;
   projectId: string;
   onClose: () => void;
-  onUpdated: () => void;
+  onUpdated: (updated: AnswerResponse) => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -87,10 +87,12 @@ export default function QuestionReviewDrawer({
   onUpdated,
 }: QuestionReviewDrawerProps) {
   const [citationsOpen, setCitationsOpen] = useState(false);
+  const [expandedCitations, setExpandedCitations] = useState<Set<string>>(new Set());
   const [manualText, setManualText] = useState('');
   const [rejectMode, setRejectMode] = useState(false);
   const [reviewerNote, setReviewerNote] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const rejectTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Sync manual text when answer changes
   useEffect(() => {
@@ -99,11 +101,22 @@ export default function QuestionReviewDrawer({
     setRejectMode(false);
     setReviewerNote('');
     setCitationsOpen(false);
+    setExpandedCitations(new Set());
   }, [answer?.id, question?.id]);
 
-  const succeed = (msg: string) => {
+  // Auto-focus + scroll rejection textarea into view
+  useEffect(() => {
+    if (rejectMode && rejectTextareaRef.current) {
+      setTimeout(() => {
+        rejectTextareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        rejectTextareaRef.current?.focus();
+      }, 50);
+    }
+  }, [rejectMode]);
+
+  const succeed = (msg: string, updated: AnswerResponse) => {
     setFeedback({ type: 'success', msg });
-    onUpdated();
+    onUpdated(updated);
   };
   const fail = (msg: string) => setFeedback({ type: 'error', msg });
 
@@ -111,16 +124,16 @@ export default function QuestionReviewDrawer({
 
   const confirmMutation = useMutation({
     mutationFn: () => updateAnswer(answer!.id, { status: 'CONFIRMED' }),
-    onSuccess: () => succeed('Answer confirmed.'),
+    onSuccess: (data: AnswerResponse) => succeed('Answer confirmed.', data),
     onError: (err) => fail(`Failed to confirm: ${extractErrorMessage(err)}`),  
   });
 
   const rejectMutation = useMutation({
     mutationFn: () =>
       updateAnswer(answer!.id, { status: 'REJECTED', reviewer_note: reviewerNote }),
-    onSuccess: () => {
+    onSuccess: (data: AnswerResponse) => {
       setRejectMode(false);
-      succeed('Answer rejected.');
+      succeed('Answer rejected.', data);
     },
     onError: (err) => fail(`Failed to reject: ${extractErrorMessage(err)}`),  
   });
@@ -131,13 +144,13 @@ export default function QuestionReviewDrawer({
         status: 'MANUAL_UPDATED',
         manual_answer_text: manualText,
       }),
-    onSuccess: () => succeed('Manual answer saved.'),
+    onSuccess: (data: AnswerResponse) => succeed('Manual answer saved.', data),
     onError: (err) => fail(`Failed to save manual answer: ${extractErrorMessage(err)}`),  
   });
 
   const regenerateMutation = useMutation({
     mutationFn: () => generateSingle(projectId, question!.id),
-    onSuccess: () => succeed('Regeneration started.'),
+    onSuccess: (data: AnswerResponse) => succeed('Answer regenerated.', data),
     onError: (err) => fail(`Failed to regenerate: ${extractErrorMessage(err)}`),  
   });
 
@@ -147,6 +160,9 @@ export default function QuestionReviewDrawer({
   const pct = Math.round(score * 100);
   const citations = answer?.citations ?? [];
   const hasAnswer = !!answer && answer.status !== 'PENDING';
+  const isConfirmed = answer?.status === 'CONFIRMED';
+  const isRejected = answer?.status === 'REJECTED';
+  const isReviewed = isConfirmed || isRejected;
 
   return (
     <>
@@ -154,7 +170,7 @@ export default function QuestionReviewDrawer({
       <div className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
       {/* Drawer */}
-      <div className="fixed right-0 top-0 z-50 h-full w-[540px] max-w-full bg-white shadow-2xl flex flex-col border-l border-slate-200">
+      <div className="fixed right-0 top-0 z-50 h-full w-135 max-w-full bg-white shadow-2xl flex flex-col border-l border-slate-200">
 
         {/* ── Drawer header ─────────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-white">
@@ -223,35 +239,105 @@ export default function QuestionReviewDrawer({
 
               {citationsOpen && (
                 <div className="divide-y divide-slate-100">
-                  {citations.map((c) => (
-                    <div key={c.id} className="px-4 py-3 space-y-1.5">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-medium text-slate-700 truncate">
-                          {c.document_id ? `Doc ${c.document_id.slice(0, 8)}…` : 'Unknown doc'}
-                        </span>
-                        {c.page_number != null && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-600">p.{c.page_number}</span>
-                        )}
-                      </div>
-                      {c.excerpt_text && (
-                        <p className="text-xs font-mono text-slate-500 bg-slate-50 rounded-lg p-2 leading-relaxed line-clamp-4">{c.excerpt_text}</p>
-                      )}
-                      {c.relevance_score != null && (
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  {citations.map((c) => {
+                    const isExcerptExpanded = expandedCitations.has(c.id);
+                    const toggleExcerpt = () =>
+                      setExpandedCitations((prev) => {
+                        const next = new Set(prev);
+                        next.has(c.id) ? next.delete(c.id) : next.add(c.id);
+                        return next;
+                      });
+                    return (
+                      <div key={c.id} className="px-4 py-3 space-y-2">
+                        {/* Header row */}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <span className="text-xs font-medium text-slate-700 truncate">
+                              {c.document_id ? `Doc ${c.document_id.slice(0, 8)}…` : 'Unknown doc'}
+                            </span>
+                            {c.page_number != null && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-600">p.{c.page_number}</span>
+                            )}
+                          </div>
+                          {c.relevance_score != null && (
+                            <span className="shrink-0 text-xs font-medium text-indigo-600 tabular-nums">
+                              {Math.round(c.relevance_score * 100)}% match
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Relevance bar */}
+                        {c.relevance_score != null && (
+                          <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
                             <div className="h-full bg-indigo-400 rounded-full" style={{ width: `${Math.round(c.relevance_score * 100)}%` }} />
                           </div>
-                          <span className="text-xs text-slate-400 tabular-nums">{Math.round(c.relevance_score * 100)}%</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                        )}
+
+                        {/* Excerpt with expand toggle */}
+                        {c.excerpt_text && (
+                          <div>
+                            <p className={`text-xs font-mono text-slate-600 bg-slate-50 rounded-lg p-2.5 leading-relaxed whitespace-pre-wrap border border-slate-100 ${
+                              isExcerptExpanded ? '' : 'line-clamp-3'
+                            }`}>
+                              {c.excerpt_text}
+                            </p>
+                            <button
+                              onClick={toggleExcerpt}
+                              className="mt-1 text-[11px] font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+                            >
+                              {isExcerptExpanded ? '▲ Show less' : '▼ Show full text'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
 
-          {/* 4. HUMAN ANSWER */}
+          {/* 4. REVIEW STATUS BANNER */}
+          {isReviewed && (
+            <div className={`rounded-xl border px-4 py-3.5 flex items-start gap-3 ${
+              isConfirmed
+                ? 'bg-emerald-50 border-emerald-200'
+                : 'bg-rose-50 border-rose-200'
+            }`}>
+              <div className={`shrink-0 mt-0.5 h-6 w-6 rounded-full flex items-center justify-center ${
+                isConfirmed ? 'bg-emerald-500' : 'bg-rose-500'
+              }`}>
+                {isConfirmed ? (
+                  <svg className="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                ) : (
+                  <svg className="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-semibold ${
+                  isConfirmed ? 'text-emerald-800' : 'text-rose-800'
+                }`}>
+                  {isConfirmed ? 'Answer Confirmed' : 'Answer Rejected'}
+                </p>
+                {isRejected && answer?.reviewer_note && (
+                  <p className="mt-1 text-xs text-rose-700 leading-relaxed">
+                    <span className="font-semibold">Reason: </span>{answer.reviewer_note}
+                  </p>
+                )}
+                <p className={`mt-1 text-[11px] ${
+                  isConfirmed ? 'text-emerald-500' : 'text-rose-400'
+                }`}>
+                  Regenerate to review again
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 5. HUMAN ANSWER */}
           {answer?.manual_answer_text && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
               <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-500 mb-2">Manual Override</p>
@@ -274,16 +360,24 @@ export default function QuestionReviewDrawer({
 
           {/* Reject inline note */}
           {rejectMode && (
-            <div className="border border-rose-200 rounded-xl p-3.5 space-y-2 bg-rose-50">
-              <label className="block text-xs font-semibold text-rose-700 uppercase tracking-wide">
-                Rejection reason <span className="text-rose-400 normal-case font-normal">(required)</span>
-              </label>
+            <div className="border-2 border-rose-300 rounded-xl p-4 space-y-3 bg-rose-50 shadow-sm">
+              <div className="flex items-center gap-2">
+                <div className="h-5 w-5 rounded-full bg-rose-500 flex items-center justify-center shrink-0">
+                  <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+                <label className="text-sm font-semibold text-rose-800">
+                  Rejection Reason <span className="text-rose-500 font-normal text-xs">(required)</span>
+                </label>
+              </div>
               <textarea
+                ref={rejectTextareaRef}
                 value={reviewerNote}
                 onChange={(e) => setReviewerNote(e.target.value)}
-                rows={2}
+                rows={3}
                 placeholder="Why is this answer being rejected?"
-                className="w-full border border-rose-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder:text-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-400 resize-none bg-white"
+                className="w-full border-2 border-rose-200 rounded-lg px-3 py-2.5 text-sm text-slate-900 placeholder:text-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:border-rose-400 resize-none bg-white"
               />
               <div className="flex gap-2 justify-end">
                 <button
@@ -321,8 +415,12 @@ export default function QuestionReviewDrawer({
           <div className="grid grid-cols-4 gap-2">
             <button
               onClick={() => confirmMutation.mutate()}
-              disabled={!answer || confirmMutation.isPending}
-              className="flex flex-col items-center justify-center gap-1 py-2.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              disabled={!answer || isReviewed || confirmMutation.isPending}
+              className={`flex flex-col items-center justify-center gap-1 py-2.5 text-xs font-semibold rounded-xl border transition-colors disabled:cursor-not-allowed ${
+                isConfirmed
+                  ? 'bg-emerald-500 border-emerald-500 text-white opacity-80'
+                  : 'text-emerald-700 bg-emerald-50 border-emerald-200 hover:bg-emerald-100 disabled:opacity-40'
+              }`}
             >
               {confirmMutation.isPending ? (
                 <Spinner className="h-4 w-4 text-emerald-600" />
@@ -331,18 +429,22 @@ export default function QuestionReviewDrawer({
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                 </svg>
               )}
-              Confirm
+              {isConfirmed ? 'Confirmed' : 'Confirm'}
             </button>
 
             <button
               onClick={() => { setRejectMode(true); setFeedback(null); }}
-              disabled={!answer || rejectMutation.isPending}
-              className="flex flex-col items-center justify-center gap-1 py-2.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              disabled={!answer || isReviewed || rejectMutation.isPending}
+              className={`flex flex-col items-center justify-center gap-1 py-2.5 text-xs font-semibold rounded-xl border transition-colors disabled:cursor-not-allowed ${
+                isRejected
+                  ? 'bg-rose-500 border-rose-500 text-white opacity-80'
+                  : 'text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 disabled:opacity-40'
+              }`}
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
-              Reject
+              {isRejected ? 'Rejected' : 'Reject'}
             </button>
 
             <button

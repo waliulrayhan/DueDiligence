@@ -157,7 +157,31 @@ async def _upsert_answer(
 
     # Replace citations atomically
     await db.execute(delete(Citation).where(Citation.answer_id == answer.id))
-    for citation in _citations_from_result(result, answer.id):
+    raw_citations = _citations_from_result(result, answer.id)
+    # Safety-net: verify every document_id referenced by a citation actually
+    # exists in the DB — stale Pinecone entries can cause FK violations.
+    if raw_citations:
+        needed_ids = [c.document_id for c in raw_citations if c.document_id is not None]
+        if needed_ids:
+            valid_q = await db.execute(
+                select(Document.id).where(Document.id.in_(needed_ids))
+            )
+            valid_ids: set[Any] = set(valid_q.scalars().all())
+            dropped = [
+                c for c in raw_citations
+                if c.document_id is not None and c.document_id not in valid_ids
+            ]
+            if dropped:
+                logger.warning(
+                    "_upsert_answer | dropping {} citation(s) with stale document_ids: {}",
+                    len(dropped),
+                    [str(c.document_id) for c in dropped],
+                )
+            raw_citations = [
+                c for c in raw_citations
+                if c.document_id is None or c.document_id in valid_ids
+            ]
+    for citation in raw_citations:
         db.add(citation)
 
     # Append audit log entry

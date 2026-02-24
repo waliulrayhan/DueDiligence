@@ -206,7 +206,21 @@ async def _attach_filenames(
         str(row.id): row.original_name for row in result.all()
     }
 
+    filtered: list[dict[str, Any]] = []
     for chunk in chunks:
-        chunk["document_filename"] = id_to_name.get(chunk.get("document_id", ""))
+        doc_id = chunk.get("document_id", "")
+        if doc_id and doc_id not in id_to_name:
+            # The document was indexed in the vector store but no longer exists
+            # in the database (e.g. after a DB reset).  Drop this chunk so we
+            # never try to insert a Citation that violates the FK constraint.
+            logger.warning(
+                "_attach_filenames | document_id={!r} not found in DB — "
+                "dropping stale chunk (chunk_id={!r})",
+                doc_id,
+                chunk.get("chunk_id"),
+            )
+            continue
+        chunk["document_filename"] = id_to_name.get(doc_id)
+        filtered.append(chunk)
 
-    return chunks
+    return filtered

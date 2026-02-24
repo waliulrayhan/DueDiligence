@@ -194,7 +194,6 @@ export default function ProjectPage() {
 
   const [generateRequestId, setGenerateRequestId] = useState<string | null>(null);
   const [drawerQuestion, setDrawerQuestion] = useState<QuestionResponse | null>(null);
-  const [drawerAnswer, setDrawerAnswer] = useState<AnswerResponse | null>(null);
 
   const { data: project, isLoading: projectLoading, isError: projectError } = useQuery<ProjectResponse>({
     queryKey: ['project', projectId],
@@ -217,6 +216,12 @@ export default function ProjectPage() {
     return map;
   }, [answersRaw]);
 
+  // Derive drawerAnswer live from answerMap so the drawer always reflects the
+  // latest fetched data after a regeneration/update — no close & reopen needed.
+  const drawerAnswer = drawerQuestion
+    ? (answerMap[drawerQuestion.id] ?? drawerQuestion.answer ?? null)
+    : null;
+
   // Group questions by section_name
   const sections = useMemo(() => {
     const questions = project?.questions ?? [];
@@ -238,16 +243,24 @@ export default function ProjectPage() {
 
   const openDrawer = (q: QuestionResponse, a: AnswerResponse | null) => {
     setDrawerQuestion(q);
-    setDrawerAnswer(a);
+    void a; // answer is now derived from answerMap — no need to store it
   };
 
   const closeDrawer = () => {
     setDrawerQuestion(null);
-    setDrawerAnswer(null);
   };
 
-  const handleDrawerUpdated = () => {
-    queryClient.invalidateQueries({ queryKey: ['answers', projectId] });
+  const handleDrawerUpdated = (updated: AnswerResponse) => {
+    // Instantly update the cache so the drawer reflects the new answer without
+    // waiting for a network round-trip.
+    queryClient.setQueryData<AnswerResponse[]>(['answers', projectId], (prev = []) => {
+      const idx = prev.findIndex((a) => a.question_id === updated.question_id);
+      if (idx === -1) return [...prev, updated];
+      const next = [...prev];
+      next[idx] = updated;
+      return next;
+    });
+    // Also kick off a background refetch so other data (project stats, etc.) stays fresh.
     queryClient.invalidateQueries({ queryKey: ['project', projectId] });
   };
 

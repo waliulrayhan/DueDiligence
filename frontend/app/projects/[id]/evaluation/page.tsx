@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, Fragment } from 'react';
+import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getEvaluationReport, runEvaluation, extractErrorMessage } from '@/lib/api';
+import { getEvaluationReport, runEvaluation, getProject, extractErrorMessage } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,11 +40,6 @@ function scoreBadge(score: number): { label: string; cls: string } {
   return { label: 'Poor', cls: 'bg-rose-50 text-rose-700 ring-1 ring-rose-200' };
 }
 
-function trunc(text: string | null | undefined, len: number): string {
-  if (!text) return '—';
-  return text.length > len ? text.slice(0, len) + '…' : text;
-}
-
 function pct(n: number) {
   return `${Math.round(n * 100)}%`;
 }
@@ -60,119 +55,224 @@ function Spinner({ className = '' }: { className?: string }) {
 
 // ─── Run Evaluation Modal ─────────────────────────────────────────────────────
 
+interface ProjectQuestion {
+  id: string;
+  question_text: string;
+}
+
 interface RunEvalModalProps {
   projectId: string;
+  questions: ProjectQuestion[];
   onClose: () => void;
   onSuccess: () => void;
 }
 
-function RunEvalModal({ projectId, onClose, onSuccess }: RunEvalModalProps) {
-  const [jsonInput, setJsonInput] = useState('');
-  const [parseError, setParseError] = useState('');
+function RunEvalModal({ projectId, questions, onClose, onSuccess }: RunEvalModalProps) {
+  const [answers, setAnswers] = useState<Record<string, string>>(() =>
+    Object.fromEntries(questions.map((q) => [q.id, '']))
+  );
+  const [submitError, setSubmitError] = useState('');
 
   const mutation = useMutation({
     mutationFn: (groundTruth: object[]) =>
       runEvaluation({ project_id: projectId, ground_truth: groundTruth }),
-    onSuccess: () => {
-      onSuccess();
-      onClose();
-    },
-    onError: (err) => setParseError(`Evaluation failed: ${extractErrorMessage(err)}`),  
+    onSuccess: () => { onSuccess(); onClose(); },
+    onError: (err) => setSubmitError(`Evaluation failed: ${extractErrorMessage(err)}`),
   });
 
+  const filled = Object.values(answers).filter((v) => v.trim()).length;
+
   const handleSubmit = () => {
-    setParseError('');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(jsonInput);
-    } catch {
-      setParseError('Invalid JSON — please check your input and try again.');
+    setSubmitError('');
+    const payload = questions
+      .filter((q) => answers[q.id]?.trim())
+      .map((q) => ({ question_id: q.id, human_answer_text: answers[q.id].trim() }));
+    if (payload.length === 0) {
+      setSubmitError('Please fill in at least one answer before submitting.');
       return;
     }
-    if (!Array.isArray(parsed)) {
-      setParseError('Input must be a JSON array.');
-      return;
-    }
-    mutation.mutate(parsed as object[]);
+    mutation.mutate(payload);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backdropFilter: 'blur(4px)', backgroundColor: 'rgba(15,23,42,0.5)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl mx-4 p-6 border border-slate-200">
-        <h2 className="text-lg font-semibold text-slate-900 mb-1">Run Evaluation</h2>
-        <p className="text-sm text-slate-500 mb-4">Paste your ground truth answers as a JSON array.</p>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 border border-slate-200 flex flex-col max-h-[90vh]">
 
-        <div className="mb-3 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200">
-          <p className="text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Example format</p>
-          <code className="text-xs text-slate-500 font-mono break-all">
-            {`[{"question_id": "...", "human_answer_text": "..."}]`}
-          </code>
+        {/* Header */}
+        <div className="px-6 pt-6 pb-4 border-b border-slate-100">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Run Evaluation</h2>
+              <p className="text-sm text-slate-500 mt-0.5">Enter your ground-truth answer for each question.</p>
+            </div>
+            <span className="text-xs font-medium bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full border border-indigo-100">
+              {filled} / {questions.length} answered
+            </span>
+          </div>
         </div>
 
-        <textarea
-          value={jsonInput}
-          onChange={(e) => { setJsonInput(e.target.value); setParseError(''); }}
-          rows={10}
-          placeholder='[{"question_id": "uuid", "human_answer_text": "The answer is..."}]'
-          className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y"
-        />
+        {/* Scrollable question list */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {questions.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-8">No questions found for this project.</p>
+          ) : (
+            questions.map((q, idx) => (
+              <div key={q.id} className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="bg-slate-50 px-4 py-2.5 flex items-start gap-2.5">
+                  <span className="mt-0.5 shrink-0 h-5 w-5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">
+                    {idx + 1}
+                  </span>
+                  <p className="text-sm text-slate-800 leading-snug">{q.question_text}</p>
+                </div>
+                <div className="px-4 py-3 bg-white">
+                  <textarea
+                    value={answers[q.id] ?? ''}
+                    onChange={(e) => {
+                      setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }));
+                      setSubmitError('');
+                    }}
+                    rows={3}
+                    placeholder="Type your ground-truth answer here…"
+                    className={`w-full border rounded-lg px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                      answers[q.id]?.trim() ? 'border-emerald-300 bg-emerald-50/30' : 'border-slate-200'
+                    }`}
+                  />
+                </div>
+              </div>
+            ))
+          )}
+        </div>
 
-        {parseError && (
-          <p className="mt-2 text-sm text-rose-600 bg-rose-50 rounded-lg px-3 py-2">{parseError}</p>
-        )}
-
-        <div className="mt-4 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!jsonInput.trim() || mutation.isPending}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {mutation.isPending && <Spinner className="h-4 w-4 text-white" />}
-            Submit
-          </button>
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+          {submitError && (
+            <p className="mb-3 text-sm text-rose-600 bg-rose-50 rounded-lg px-3 py-2 border border-rose-200">{submitError}</p>
+          )}
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-400">Questions with empty answers will be skipped.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={filled === 0 || mutation.isPending}
+                className="flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {mutation.isPending ? (
+                  <><Spinner className="h-4 w-4 text-white" /> Evaluating…</>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3l14 9-14 9V3z" />
+                    </svg>
+                    Run Evaluation
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Expanded Row ─────────────────────────────────────────────────────────────
+// ─── Result Card ─────────────────────────────────────────────────────────────
 
-function ExpandedRow({ row }: { row: EvaluationResultRow }) {
+function ResultCard({ row, index }: { row: EvaluationResultRow; index: number }) {
+  const [open, setOpen] = useState(false);
+  const badge = scoreBadge(row.overall_score);
+
   return (
-    <tr>
-      <td colSpan={5} className="px-4 py-4 bg-slate-50 border-b border-slate-200">
-        <div className="grid grid-cols-2 gap-4 mb-3">
-          <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 mb-2">AI Answer</p>
-            <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{row.ai_answer_text ?? '—'}</p>
-            <p className="mt-2 text-xs text-indigo-400">Semantic: {pct(row.similarity_score)}</p>
-          </div>
-          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-500 mb-2">Human Answer</p>
-            <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{row.human_answer_text ?? '—'}</p>
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      {/* Always-visible header — click anywhere to toggle */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full text-left px-5 py-4 flex items-start gap-4 hover:bg-slate-50 transition-colors group"
+      >
+        {/* Number */}
+        <span className="mt-0.5 shrink-0 h-6 w-6 rounded-full bg-indigo-50 text-indigo-600 text-xs font-bold flex items-center justify-center ring-1 ring-indigo-100">
+          {index + 1}
+        </span>
+
+        {/* Question + meta */}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-slate-800 leading-snug mb-2">{row.question_text}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${badge.cls}`}>
+              {badge.label}
+            </span>
+            <span className="text-xs text-slate-400 tabular-nums font-medium">{pct(row.overall_score)}</span>
+            {/* Score bar */}
+            <div className="flex-1 min-w-20 max-w-40 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  row.overall_score >= 0.8 ? 'bg-emerald-400' :
+                  row.overall_score >= 0.6 ? 'bg-indigo-400' :
+                  row.overall_score >= 0.4 ? 'bg-amber-400' : 'bg-rose-400'
+                }`}
+                style={{ width: pct(row.overall_score) }}
+              />
+            </div>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
-          {row.explanation && (
-            <p className="flex-1 min-w-0">
-              <span className="font-semibold text-slate-700">Explanation: </span>
-              {row.explanation}
-            </p>
-          )}
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <span><span className="font-semibold">Semantic:</span> <span className="tabular-nums">{row.similarity_score.toFixed(2)}</span></span>
-            <span><span className="font-semibold">Keyword:</span> <span className="tabular-nums">{row.keyword_overlap.toFixed(2)}</span></span>
+
+        {/* Expand chevron — rotates when open */}
+        <div className={`shrink-0 mt-0.5 h-7 w-7 rounded-lg flex items-center justify-center border transition-all ${
+          open
+            ? 'bg-indigo-600 border-indigo-600 text-white'
+            : 'bg-slate-50 border-slate-200 text-slate-400 group-hover:border-indigo-200 group-hover:text-indigo-500'
+        }`}>
+          <svg
+            className={`h-3.5 w-3.5 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+
+      {/* Expanded detail panel */}
+      {open && (
+        <div className="border-t border-slate-100 px-5 py-4 bg-slate-50/60">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 mb-2">AI Answer</p>
+              <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{row.ai_answer_text ?? '—'}</p>
+            </div>
+            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-500 mb-2">Human Answer</p>
+              <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{row.human_answer_text ?? '—'}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
+            {row.explanation ? (
+              <p className="text-xs text-slate-600 flex-1 min-w-0">
+                <span className="font-semibold text-slate-700">Explanation: </span>{row.explanation}
+              </p>
+            ) : <span />}
+            <div className="flex items-center gap-4 shrink-0">
+              <div className="text-center">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Semantic</p>
+                <p className="text-sm font-bold text-slate-700 tabular-nums">{pct(row.similarity_score)}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Keyword</p>
+                <p className="text-sm font-bold text-slate-700 tabular-nums">{pct(row.keyword_overlap)}</p>
+              </div>
+              <div className="text-center">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Overall</p>
+                <p className="text-sm font-bold text-slate-700 tabular-nums">{pct(row.overall_score)}</p>
+              </div>
+            </div>
           </div>
         </div>
-      </td>
-    </tr>
+      )}
+    </div>
   );
 }
 
@@ -185,7 +285,14 @@ export default function EvaluationPage() {
   const queryClient = useQueryClient();
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  const { data: projectData } = useQuery<{ questions: ProjectQuestion[] }>({  
+    queryKey: ['project', projectId],
+    queryFn: () => getProject(projectId),
+    enabled: !!projectId,
+    staleTime: 60000,
+  });
+  const projectQuestions: ProjectQuestion[] = projectData?.questions ?? [];
 
   const { data: report, isLoading, isError: evalError } = useQuery<EvaluationReport>({
     queryKey: ['evaluation', projectId],
@@ -194,14 +301,6 @@ export default function EvaluationPage() {
     // Evaluation is not a live-polling endpoint — only refetch on window focus
     staleTime: 60000,
   });
-
-  const toggleRow = (id: string) => {
-    setExpandedRows((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
 
   const handleExportCsv = () => {
     if (!report?.results?.length) return;
@@ -325,13 +424,21 @@ export default function EvaluationPage() {
               </div>
             </div>
 
-            {/* ── Results table ────────────────────────────────────────────── */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-                <h2 className="text-sm font-semibold text-slate-800">{results.length} Results</h2>
+            {/* ── Results card list ────────────────────────────────────── */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-slate-800">{results.length} Results</h2>
+                  <span className="flex items-center gap-1 text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    Click a card to expand
+                  </span>
+                </div>
                 <button
                   onClick={handleExportCsv}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors bg-white"
                 >
                   <svg className="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -340,49 +447,9 @@ export default function EvaluationPage() {
                 </button>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-[22%]">Question</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-[22%]">AI Answer</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-[22%]">Human Answer</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-[14%]">Score</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-[20%]">Explanation</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {results.map((row) => {
-                      const badge = scoreBadge(row.overall_score);
-                      const isExpanded = expandedRows.has(row.question_id);
-                      return (
-                        <Fragment key={row.question_id}>
-                          <tr
-                            onClick={() => toggleRow(row.question_id)}
-                            className="border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-colors"
-                          >
-                            <td className="px-4 py-3 text-slate-800">{trunc(row.question_text, 60)}</td>
-                            <td className="px-4 py-3 text-slate-500">{trunc(row.ai_answer_text, 80)}</td>
-                            <td className="px-4 py-3 text-slate-500">{trunc(row.human_answer_text, 80)}</td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-1.5">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge.cls}`}>
-                                  {badge.label}
-                                </span>
-                                <span className="text-xs text-slate-400 tabular-nums">{row.overall_score.toFixed(2)}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-slate-500">{trunc(row.explanation, 60)}</td>
-                          </tr>
-                          {isExpanded && (
-                            <ExpandedRow row={row} />
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {results.map((row, idx) => (
+                <ResultCard key={row.question_id} row={row} index={idx} />
+              ))}
             </div>
           </>
         )}
@@ -392,6 +459,7 @@ export default function EvaluationPage() {
       {modalOpen && (
         <RunEvalModal
           projectId={projectId}
+          questions={projectQuestions}
           onClose={() => setModalOpen(false)}
           onSuccess={() => queryClient.invalidateQueries({ queryKey: ['evaluation', projectId] })}
         />

@@ -86,7 +86,7 @@ export const generateSingle = (projectId: string, questionId: string) =>
   api.post('/answers/generate-single', {
     project_id: projectId,
     question_id: questionId,
-  }).then((res) => res.data);
+  }, { timeout: 120_000 }).then((res) => res.data); // LLM calls can take up to ~60 s
 
 export const generateAll = (projectId: string) =>
   api.post('/answers/generate-all', { project_id: projectId }).then((res) => res.data);
