@@ -493,16 +493,18 @@ async def update_answer(
     """Reviewer approves, rejects, or manually edits an answer."""
 
     # Validation ─────────────────────────────────────────────────────────────
-    if body.status == AnswerStatus.REJECTED and not body.reviewer_note:
-        raise HTTPException(
-            status_code=400,
-            detail="reviewer_note is required when status=REJECTED.",
-        )
-    if body.status == AnswerStatus.MANUAL_UPDATED and not body.manual_answer_text:
-        raise HTTPException(
-            status_code=400,
-            detail="manual_answer_text is required when status=MANUAL_UPDATED.",
-        )
+    if body.status == AnswerStatus.REJECTED:
+        if not body.reviewer_note or len(body.reviewer_note.strip()) < 5:
+            raise HTTPException(
+                status_code=400,
+                detail="reviewer_note is required when rejecting an answer (min 5 chars).",
+            )
+    if body.status == AnswerStatus.MANUAL_UPDATED:
+        if not body.manual_answer_text or len(body.manual_answer_text.strip()) < 5:
+            raise HTTPException(
+                status_code=400,
+                detail="manual_answer_text is required for MANUAL_UPDATED (min 5 chars).",
+            )
 
     # Load answer ─────────────────────────────────────────────────────────────
     ans_result = await db.execute(
@@ -538,7 +540,7 @@ async def update_answer(
             old_status=old_status.value,
             new_status=body.status.value,
             changed_by="reviewer",
-            change_note=body.reviewer_note,
+            change_note=body.reviewer_note or f"Status changed to {body.status.value}",
         )
     )
 
