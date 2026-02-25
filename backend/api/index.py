@@ -12,7 +12,10 @@ import os
 # ---------------------------------------------------------------------------
 if os.environ.get("VERCEL"):
     # /tmp is the only writable directory on Vercel's Lambda runtime.
-    os.environ.setdefault("UPLOAD_DIR", "/tmp/uploads")
+    # Force-override regardless of what's set in the Vercel dashboard —
+    # setdefault() is insufficient because dashboard env vars are pre-loaded.
+    os.environ["UPLOAD_DIR"] = "/tmp/uploads"
+    os.makedirs("/tmp/uploads", exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Import the FastAPI application

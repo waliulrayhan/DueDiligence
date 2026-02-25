@@ -175,7 +175,27 @@ class VectorStore:
 
 
 # ---------------------------------------------------------------------------
-# Shared singleton – import this everywhere:
+# Lazy singleton – import this everywhere:
 #   from src.indexing.vector_store import vector_store
+#
+# VectorStore is NOT instantiated at module import time. The first call to
+# vector_store triggers __init__, which connects to Pinecone. This avoids
+# crashing the entire Lambda on cold start if Pinecone is briefly unreachable.
 # ---------------------------------------------------------------------------
-vector_store = VectorStore()
+
+class _LazyVectorStore:
+    """Proxy that creates the real VectorStore on first attribute access."""
+
+    def __init__(self) -> None:
+        self._instance: VectorStore | None = None
+
+    def _get(self) -> VectorStore:
+        if self._instance is None:
+            self._instance = VectorStore()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get(), name)
+
+
+vector_store: Any = _LazyVectorStore()
