@@ -19,7 +19,8 @@ aiofiles            # Async file I/O so upload/read operations don't block the e
 
 # Vector store & embeddings
 pinecone            # Pinecone managed vector database client for storing/querying embeddings
-sentence-transformers  # Generates dense text embeddings from pre-trained transformer models
+# Embeddings are generated via Pinecone Inference API (multilingual-e5-large, 1024-dim)
+# sentence-transformers removed — PyTorch dependency (~4 GB) exceeds Vercel Lambda 500 MB limit
 
 # Document parsing
 PyPDF2              # Extracts text and metadata from PDF files

@@ -141,8 +141,9 @@ GET /api/evaluation/{project_id}
 | Property | Value |
 |---|---|
 | Index name | `duediligence-chunks` (configurable via `PINECONE_INDEX_NAME`) |
-| Dimension | 384 |
+| Dimension | 1024 |
 | Metric | cosine |
+| Embedding model | `multilingual-e5-large` via Pinecone Inference API (server-side, no local model) |
 | Cloud / Region | Configurable via `PINECONE_CLOUD` / `PINECONE_REGION` |
 | Vector ID | `chunk_id` (e.g. `{document_id}__p{page}_c{n}`) |
 | Metadata fields | `document_id` (UUID string), `chunk_id`, `page_number` (int), `text` (first 1000 chars), `word_start`, `word_end` (optional word offsets) |

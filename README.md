@@ -13,7 +13,7 @@ An AI-powered full-stack application that automates the completion of institutio
 | Database | Neon Postgres (SQLAlchemy async + Alembic migrations) |
 | Vector DB | Pinecone Serverless (cosine, 384-dim) |
 | LLM | xAI Grok / Groq — OpenAI-compatible endpoint |
-| Embeddings | sentence-transformers `all-MiniLM-L6-v2` (384-dim, CPU-friendly) |
+| Embeddings | Pinecone Inference API `multilingual-e5-large` (1024-dim, serverless — no PyTorch) |
 
 ---
 
@@ -102,6 +102,4 @@ Copy `backend/.env.example` to `backend/.env` and fill in:
 
 - **Sync embeddings in async context:** `sentence-transformers` uses synchronous inference. Embedding calls are wrapped in `asyncio.to_thread()` for Pinecone health checks; bulk indexing runs in a `BackgroundTask` so the event loop is not blocked during request handling.
 - **Vercel serverless constraints:** FastAPI `BackgroundTasks` require a long-lived process. On Vercel's serverless runtime, background tasks complete only if the function stays warm. For production workloads requiring reliable async processing, deploy the backend to Railway, Render, or a VPS.
-- **Model download on first run:** `all-MiniLM-L6-v2` (~90MB) is downloaded once by `sentence-transformers` and cached. First startup is slower; subsequent restarts use the local cache.
-- **Pinecone free tier:** Free tier supports one index with up to 100K vectors. The four MiniMax PDFs produce ~800–1200 vectors total — well within limits.
 - **No authentication:** The API has no user authentication. All projects and documents are globally accessible. Add OAuth2/JWT before any production deployment.

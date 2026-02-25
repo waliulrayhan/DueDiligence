@@ -4,18 +4,19 @@ from typing import Any
 
 from loguru import logger
 from pinecone import Pinecone, ServerlessSpec
-from sentence_transformers import SentenceTransformer
 
 from src.config import settings
 
 # ---------------------------------------------------------------------------
-# Embedding model
+# Embedding model — Pinecone Inference API (no local model / PyTorch required)
 # ---------------------------------------------------------------------------
-# all-MiniLM-L6-v2 produces 384-dimensional vectors and is fast enough to run
-# on CPU.  The model is downloaded once on first use and cached locally.
+# multilingual-e5-large runs server-side via pc.inference.embed().
+# This keeps the Lambda bundle well under 500 MB for Vercel deployment.
 # Index name is configured via PINECONE_INDEX_NAME env var (default: 'duediligence-chunks').
-_EMBED_MODEL = "all-MiniLM-L6-v2"
-_DIMENSION = 384
+# NOTE: If migrating from the old all-MiniLM-L6-v2 (384-dim) index, delete the
+#       existing Pinecone index first — dimensions cannot be changed in place.
+_EMBED_MODEL = "multilingual-e5-large"
+_DIMENSION = 1024
 _METRIC = "cosine"
 
 
@@ -50,10 +51,28 @@ class VectorStore:
             logger.debug("Using existing Pinecone index '{}'.", self.index_name)
 
         self.index = self.pc.Index(self.index_name)
+        logger.debug("Using Pinecone Inference model '{}'.", _EMBED_MODEL)
 
-        # ── Embedding model ────────────────────────────────────────────────
-        logger.debug("Loading sentence-transformer model '{}'.", _EMBED_MODEL)
-        self.model = SentenceTransformer(_EMBED_MODEL)
+    # ---------------------------------------------------------------------- #
+    # Internal                                                                 #
+    # ---------------------------------------------------------------------- #
+
+    def _embed(self, texts: list[str], input_type: str) -> list[list[float]]:
+        """Call Pinecone Inference API and return float vectors.
+
+        *input_type* is ``'passage'`` for documents and ``'query'`` for search.
+        Pinecone allows max 96 inputs per call; we batch accordingly.
+        """
+        result: list[list[float]] = []
+        for i in range(0, len(texts), 96):
+            batch = texts[i : i + 96]
+            response = self.pc.inference.embed(
+                model=_EMBED_MODEL,
+                inputs=batch,
+                parameters={"input_type": input_type, "truncate": "END"},
+            )
+            result.extend([e["values"] for e in response])
+        return result
 
     # ---------------------------------------------------------------------- #
     # Public API                                                               #
@@ -74,9 +93,7 @@ class VectorStore:
             return
 
         texts = [c["text"] for c in chunks]
-        embeddings = self.model.encode(
-            texts, batch_size=32, show_progress_bar=False
-        ).tolist()
+        embeddings = self._embed(texts, input_type="passage")
 
         vectors: list[dict[str, Any]] = []
         for chunk, embedding in zip(chunks, embeddings):
@@ -121,9 +138,7 @@ class VectorStore:
             ``chunk_id``, ``document_id``, ``text``, ``page_number``,
             ``relevance_score``
         """
-        query_embedding = self.model.encode(
-            [query], show_progress_bar=False
-        ).tolist()[0]
+        query_embedding = self._embed([query], input_type="query")[0]
 
         pinecone_filter: dict[str, Any] | None = None
         if filter_document_ids:
