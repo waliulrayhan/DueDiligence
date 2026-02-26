@@ -89,12 +89,15 @@ async def upload_document(
     await db.commit()
 
     # 5. Launch background task ──────────────────────────────────────────────
+    # Pass file bytes explicitly so the worker can re-write them to /tmp on
+    # serverless platforms where a fresh Lambda invocation has an empty /tmp.
     background_tasks.add_task(
         process_document_background,
         document_id=document_id,
         request_id=request_id,
         file_path=str(file_path),
         file_type=ext,
+        file_content=contents,
     )
 
     # 6. Return 202 immediately ──────────────────────────────────────────────

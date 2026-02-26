@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 from loguru import logger
 from sqlalchemy import select, update
@@ -22,6 +24,7 @@ async def process_document_background(
     request_id: str,
     file_path: str,
     file_type: str,
+    file_content: bytes | None = None,
 ) -> None:
     """Parse, chunk, embed, and index a document.
 
@@ -32,6 +35,16 @@ async def process_document_background(
         Document:     UPLOADING → INDEXING → READY  (or FAILED)
         AsyncRequest: PENDING   → RUNNING  → COMPLETED (or FAILED)
     """
+    # On serverless platforms (Vercel) the background task may run in a fresh
+    # Lambda invocation with an empty /tmp.  Re-materialize the file from the
+    # bytes that were captured in the upload handler's memory.
+    if file_content is not None:
+        _p = Path(file_path)
+        _p.parent.mkdir(parents=True, exist_ok=True)
+        if not _p.exists():
+            _p.write_bytes(file_content)
+            logger.info("Re-wrote upload bytes to '{}' for background task.", file_path)
+
     async with AsyncSessionLocal() as db:
         try:
             # 1. Mark as RUNNING ─────────────────────────────────────────────
